@@ -168,10 +168,19 @@ def main() -> None:
     # raw_result.result.classification
     classified = (
         queried
+        .withColumn(
+            "parsed_result",
+            F.from_json(
+                F.col("raw_result.result"),
+                output_schema,
+            ),
+        )
         .select(
             "section_id",
-            "raw_result.result.classification.*",
-            "raw_result.errorMessage",
+            "parsed_result.classification.*",
+            F.col("raw_result.errorMessage").alias(
+                "errorMessage"
+            ),
         )
         .withColumn(
             "now",
