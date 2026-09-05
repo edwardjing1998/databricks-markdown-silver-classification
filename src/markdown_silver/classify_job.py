@@ -15,11 +15,7 @@ def main() -> None:
 
     sections = spark.table(settings.sections_table)
 
-    # Process:
-    # 1. New PENDING records.
-    # 2. Records previously left as RULE_ONLY.
-    # 3. Previous AI failures.
-    # 4. AI records produced using an older model or prompt.
+    # Select records that need AI classification or reclassification.
     needs_refresh = (
         F.col("classification_status").isin(
             "PENDING",
@@ -50,7 +46,7 @@ def main() -> None:
         )
     )
 
-    # Only ambiguous rule classifications are sent to AI.
+    # Only low-confidence rule results require AI classification.
     pending = sections.filter(
         needs_refresh
         & (
@@ -59,7 +55,8 @@ def main() -> None:
         )
     )
 
-    # High-confidence rule results do not need AI.
+    # High-confidence rule results can be marked as classified
+    # without calling the AI model.
     spark.sql(
         f"""
         UPDATE {settings.sections_table}
@@ -127,9 +124,8 @@ def main() -> None:
         ),
     )
 
-    # Databricks DDL structured output requires exactly one top-level field.
-    # The six classification values are therefore nested under
-    # the single top-level field named "classification".
+    # Databricks structured output requires exactly one top-level field.
+    # All classification fields are nested under "classification".
     output_schema = (
         "STRUCT<classification:STRUCT<"
         "section_type:STRING,"
@@ -162,15 +158,19 @@ def main() -> None:
         )
     )
 
-    # failOnError=false returns:
+    # With failOnError=false, this Databricks workspace returns:
     #
-    # raw_result.response.classification
+    # raw_result.result
     # raw_result.errorMessage
+    #
+    # The structured classification is therefore located at:
+    #
+    # raw_result.result.classification
     classified = (
         queried
         .select(
             "section_id",
-            "raw_result.response.classification.*",
+            "raw_result.result.classification.*",
             "raw_result.errorMessage",
         )
         .withColumn(
@@ -231,19 +231,23 @@ def main() -> None:
 
     total_ai = (
         spark.table(settings.sections_table)
-        .filter(F.col("classification_method") == "AI")
+        .filter(
+            F.col("classification_method") == "AI"
+        )
         .count()
     )
 
     failed_ai = (
         spark.table(settings.sections_table)
-        .filter(F.col("classification_status") == "FAILED")
+        .filter(
+            F.col("classification_status") == "FAILED"
+        )
         .count()
     )
 
     print(
         "AI classification completed: "
-        f"AI rows={total_aiapha}, "
+        f"AI rows={total_ai}, "
         f"failed rows={failed_ai}"
     )
 
