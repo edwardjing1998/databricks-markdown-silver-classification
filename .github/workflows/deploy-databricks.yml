@@ -1,0 +1,59 @@
+name: Deploy and run Silver classification
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [development, qa, production]
+        default: development
+      enable_ai:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: markdown-silver-${{ inputs.environment }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: ${{ inputs.environment }}
+    env:
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest && python -m build --wheel
+      - uses: databricks/setup-cli@main
+      - name: Validate bundle
+        run: |
+          databricks bundle validate --target "${{ inputs.environment }}" \
+            --var="catalog=${{ vars.DATABRICKS_CATALOG }}" \
+            --var="bronze_schema=${{ vars.DATABRICKS_BRONZE_SCHEMA }}" \
+            --var="silver_schema=${{ vars.DATABRICKS_SILVER_SCHEMA }}" \
+            --var="model_endpoint=${{ vars.DATABRICKS_MODEL_ENDPOINT }}" \
+            --var="enable_ai=${{ inputs.enable_ai }}"
+      - name: Deploy bundle
+        run: |
+          databricks bundle deploy --target "${{ inputs.environment }}" --auto-approve \
+            --var="catalog=${{ vars.DATABRICKS_CATALOG }}" \
+            --var="bronze_schema=${{ vars.DATABRICKS_BRONZE_SCHEMA }}" \
+            --var="silver_schema=${{ vars.DATABRICKS_SILVER_SCHEMA }}" \
+            --var="model_endpoint=${{ vars.DATABRICKS_MODEL_ENDPOINT }}" \
+            --var="enable_ai=${{ inputs.enable_ai }}"
+      - name: Run Silver job
+        run: |
+          databricks bundle run markdown_silver_classification --target "${{ inputs.environment }}" \
+            --var="catalog=${{ vars.DATABRICKS_CATALOG }}" \
+            --var="bronze_schema=${{ vars.DATABRICKS_BRONZE_SCHEMA }}" \
+            --var="silver_schema=${{ vars.DATABRICKS_SILVER_SCHEMA }}" \
+            --var="model_endpoint=${{ vars.DATABRICKS_MODEL_ENDPOINT }}" \
+            --var="enable_ai=${{ inputs.enable_ai }}"
+
